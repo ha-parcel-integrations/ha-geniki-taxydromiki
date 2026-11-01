@@ -1,0 +1,231 @@
+# Working in this repository
+
+Home Assistant custom integration for **Geniki Taxydromiki** parcel tracking.
+Distributed via HACS; not part of HA core. One carrier in the
+[ha-parcel-integrations](https://github.com/ha-parcel-integrations) suite,
+**generated from the suite's carrier template** — everything outside *Carrier-specific
+notes* is suite-wide.
+No DTO layer.
+
+API mechanics — endpoints, parameters, status vocabularies — are **never**
+kept in this repo.
+
+## Shared conventions — fetch when relevant
+
+Suite-wide rules live in
+[`.github/CONVENTIONS.md`](https://github.com/ha-parcel-integrations/.github/blob/main/CONVENTIONS.md)
+and are **not** repeated here. Don't fetch it every session — fetch it **before**
+you act in one of these areas:
+
+| Before you … | Fetch `CONVENTIONS.md` § |
+|---|---|
+| touch entities, sensors, config/options flow, coordinator, diagnostics, translations | *Home Assistant developer docs* (its table points on to the canonical HA page — don't rely on memory) |
+| add/rename a parcel field, a `ParcelStatus`, or a bus event; change the sort/first-refresh; touch unmapped-status logging | *Parcel contract* — exact key set, units, sort, events + suppression; `test_parcels.py::test_normalize_publishes_exactly_the_canonical_keys` guards the key set |
+| change which optional field this carrier populates vs. always returns `None` | Update `const.py`'s `CAPABILITIES` in the same commit — it feeds the comparison table on the docs site, so a field that starts (or stops) coming back non-null and isn't reflected there is a wrong claim on the website, not just a stale comment. If this carrier has more than one backend (a country-specific transport, not just a config option) with genuinely different field support, `CAPABILITIES` should be a `CAPABILITIES_BY_VARIANT` dict instead — one frozenset per backend, so a field only some backends populate doesn't get silently intersected away or overclaimed for the rest. A field you could not verify (no real parcel yet) goes in `PENDING_CAPABILITIES` instead of being left out — the site then says "awaiting data" rather than claiming the API never exposes it; move it into `CAPABILITIES` once confirmed |
+| ship anything while below 1.0.0 (unconfirmed data) | *Pre-1.0 releases* — one-shot WARNINGs for every guessed shape/code |
+| consider "fixing" a lint/pattern the skill flags (poll interval, inline client, sync requests) | *Deliberate skill divergences* — likely intentional, don't re-flag |
+| commit, bump, tag, release, or write release notes; add a feature without a test | *Workflow / Commits / Versioning / Testing* |
+
+**Suite-wide tripwires, kept inline on purpose:**
+- **First refresh in `__init__.py`, before `async_forward_entry_setups`** — from
+  a forwarded platform HA can't catch `ConfigEntryNotReady` and half-sets-up the
+  entry. Runtime-only; tests don't catch a regression.
+- **Setup stale-entity sweep is scoped to `domain == "sensor"` and skips
+  `non_parcel_unique_ids`** — else it deletes the refresh button / the
+  summary+diagnostic sensors. Add a new non-parcel sensor's unique_id to the set.
+- **Per-parcel sensors are removed by the summary sensor** via
+  `entity_registry.async_remove` (self-removal races and leaves ghosts).
+- **Events and `_known_state` are built from the unfiltered delivered list.**
+  The "keep N days / N parcels" option only trims `coordinator.delivered`; a
+  parcel it leaves out must still fire `_parcel_delivered`.
+- **The optional pickup-point summaries are a pair.** A carrier that can tell
+  a parcel is destined for a pickup point exposes
+  `en_route_to_pickup_point` for `pickup is true` before it arrives; one that
+  can reach `ParcelStatus.AT_PICKUP_POINT` also exposes `awaiting_pickup`.
+  See *Parcel contract* in `CONVENTIONS.md`. Say "pickup point", not
+  "ServicePoint"/"parcel shop"/"locker", for the generic concept; the
+  example carrier demonstrates both canonical sensors.
+
+## Carrier-specific notes
+
+- **Manual one-code tracker.** Account-less, keyed on the code alone; `single_config_entry` stays. No outgoing-parcel support: no consumer-sending surface is known, and the reply cannot reveal a direction.
+- **Markets:** Greece, Cyprus and Bulgaria only. State this wherever countries are listed.
+- **HTTP 200 is not success.** The reply is read from `Result` in the body: 0 found, 9 unknown code (`None`, never an error). A found code without checkpoints reads like an unknown code, so the last good state or the placeholder stays. Any other `Result`, a timeout, a reply not keyed by the requested code, or `success: false` raises and the coordinator keeps the last good state of that parcel. One code per POST, bare JSON string as the form body.
+- **Raw is the full result object.** The reply does not repeat the code, so the coordinator adds it as `trackingNumber` (its existing back-fill). Diagnostics redact `raw` wholesale plus every key of the reply.
+- **The newest mappable checkpoint decides the status**, sorted by `StatusDate` (Europe/Athens wall-clock time, assumed). The header `Status` text never decides. An unmapped code falls back to the newest mappable checkpoint, then `unknown`, with one WARNING per code.
+- **Cancelling pairs** (`C_L1`/`C_L2`, `C_E1`/`C_E2`, `C_K8`/`C_K9`) stay in the history but neither row decides the status, so a retracted scan cannot flip a parcel. A `C_L1` or `C_K8` nothing has retracted is an ordinary `in_transit` scan.
+- **Possible delivery cancellations.** `C_P4`, `C_S5` and `C_S8` are unconfirmed and warn as unmapped, but an older delivered scan no longer counts after one, so a false `delivered` cannot stop polling. A newer delivered scan still counts.
+- **Attempt codes before delivery.** `C_EA_DP` and `C_EA_KS` map to `problem`, but any later mapped scan takes over; they appear before `C_P1` on delivered parcels.
+- **No pickup-point code is known.** `at_pickup_point` is never produced: a parcel waiting at a service point (last code `C_A1`) reads `in_transit`. `pickup_point` is pending in `PENDING_CAPABILITIES`; the `awaiting_pickup` sensor stays at zero.
+- **Fields that are `None` on purpose:** sender, ETA window, weight, dimensions, pickup point. `receiver` is the consignee name on delivered parcels only. `delivered_at` is the reply's delivery date, else the delivering scan's time.
+- **Polling:** no delivery window exists, so an out-for-delivery parcel is always in the hot tier (15 min). The suite's dynamic polling is otherwise unchanged; no explicit throttling has been observed. A found code has been seen taking over 30 seconds to answer, cause unknown, so the request timeout is 60 seconds.
+- **Tracking codes are normalised to uppercase letters and digits** by the shared options-flow helper; no format regex.
+- **Warnings log keys and codes, never values:** unmapped `StatusCode`, unexpected `Result`, singleton or odd checkpoint containers, unknown keys, unparseable dates, a non-empty `ReturningServiceVoucher` (the return flow is not mapped), an unseen header `Status` or `DeliveredAt` (field name only), and a header that disagrees with the scans on delivery.
+
+## Options and reloads
+
+For code-based carriers, the options flow starts with exactly `Parcels` and
+`Settings` — or, where the carrier supports outgoing parcels, `Incoming
+parcels` / `Outgoing parcels` / `Settings` (see the next section).
+`Parcels` is one editable multi-code list; `Settings` is
+a flat form — some carriers use one sectioned form
+(`data_entry_flow.section`) instead; both are generator variants, not carrier
+decisions. Changes apply without a restart. Two models, **do not mix them**:
+- **Account-less carriers** (the default, and the `--auth byo-key` build) apply
+  changes live: an update listener calls `async_request_refresh()`, so
+  added/removed parcel sensors appear immediately (this is also the resume
+  path after polling has fully suspended — see "Dynamic polling" below).
+- **Account-based carriers** make the options flow an `OptionsFlowWithReload`
+  and register **no** update listener (the two may not be combined). Never call
+  `async_schedule_reload` from the submit instead: that reload starts before the
+  new options are saved, so anything read from `entry.options` at setup keeps
+  the old value.
+
+## Auth models
+
+Three `--auth` builds, one axis: **what the config flow asks for and
+validates**, not how tracking works. `none` and `byo-key` both key tracking on
+codes the user types in (`Parcels`/`Settings` options, `track_parcel` /
+`untrack_parcel` services, the account-less coordinator and its full-stop /
+delivered-skip behaviour below) — `byo-key` only adds a required key field
+validated against the carrier's **official** API at setup, `CONF_API_KEY` in
+`entry.data`, and a reauth flow for when the key is rotated or revoked outside
+Home Assistant (`GenikiTaxydromikiAuthError` from any per-parcel fetch raises
+`ConfigEntryAuthFailed` for the whole poll — one credential covers every
+tracked code, so a rejected key is never treated as one parcel's problem).
+`credentials` is the only one that changes the *tracking* model too (an
+account feed, not user-entered codes) — see the split above.
+
+Reach for `byo-key` only when the carrier's *unauthenticated/consumer* surface
+is unusable (bot-walled, requires a session a script can't hold) and the
+*official* developer key is reachable by a private individual. A
+`business`-gated key is a wall, not a BYO key, whatever the portal's own copy
+claims.
+
+## Incoming and outgoing parcels
+
+**Add outgoing support whenever the carrier lets a consumer send a parcel** —
+a C2C shipment, a locker drop-off, a marketplace or returns label. It is not
+an optional extra to bolt on later: without it a parcel the user sent counts
+towards `incoming_active` and sits on their dashboard next to the ones they
+are waiting for. A carrier that genuinely has no consumer-sending surface is
+exempt — say so in *Carrier-specific notes* so the gap reads as a decision.
+
+Where the direction comes from has exactly two answers, and which one applies
+follows from the carrier, not from taste:
+
+- **Account-based** — the account feed distinguishes them, so derive it and
+  never ask the user. A shipment matching neither side logs a one-shot
+  warning and defaults to incoming rather than disappearing from every list.
+- **Account-less** — the payload cannot reveal it (the user's own parcel and
+  a stranger's look alike, and there is no account identity to compare a
+  party against), so the **user declares it per parcel**: two menu entries in
+  the options flow, each the same multi-code list, plus a `direction` field on
+  `track_parcel`. Store it as `CONF_DIRECTION` on the `CONF_PARCELS` dicts,
+  defaulting to incoming, so entries written before the option existed need no
+  migration. Re-filing a code under the other direction moves it instead of
+  erroring — that is the correction path.
+  **Never infer direction from free-text event wording**: a handover sentence
+  that happens to name the drop-off point is not a structured field, says
+  nothing before handover, and silently ties the split to one locale.
+
+Above that split the shape is identical either way, and is suite-wide:
+`coordinator.outgoing` / `coordinator.delivered_outgoing` alongside `data` /
+`delivered`; `outgoing_parcels` + `outgoing_delivered_parcels` summary
+sensors (their unique_ids belong in `non_parcel_unique_ids`); per-parcel
+sensors spawned for **both** directions; the
+`<domain>_outgoing_parcel_status_changed` / `_outgoing_parcel_delivered`
+event pair, with **no** `registered` and no delivery-time event for outgoing;
+`awaiting_pickup`, `next_delivery` and the calendar staying incoming-only;
+and both new lists in `diagnostics.py`. The aggregator needs no change — it
+buckets on the sensor suffix and the event prefix. Also set
+`directions: incoming+outgoing` for the carrier in the docs site's
+`data/carriers.yml`.
+
+## Tracking-code validation
+
+In code-based carriers (account-based sources have no code entry),
+`valid_tracking_code` in `config_flow.py` accepts every non-empty code — no
+format regex. This is a suite-wide convention, not a per-carrier TODO: real
+tracking-number formats vary too much across carriers, and are often not
+fully confirmed even for this one, to gate on a guessed shape. A too-strict
+regex risks rejecting a genuinely valid code; an actually-bad code just comes
+back "not found" on the next poll, which is a far cheaper failure mode. Do
+not add one back in, even once the format is confirmed.
+
+## Dynamic polling
+
+There is no user-facing polling interval — this is a deliberate suite-wide
+choice, not a gap. `coordinator.py`'s `_hottest_tier_minutes` /
+`_next_update_interval` recompute `update_interval` at the end of every
+refresh. The design rationale (quiet window, tiers, stagger, backoff,
+delivered-skip) is spelled out below.
+
+- **Quiet window:** no polling 00:00–06:00 local time, except two daily
+  anchors (~00:00 and ~06:00) for overnight / end-of-day catch-up.
+- **Tiers while polling:** *hot* (15 min) when a tracked, not-yet-delivered
+  parcel is `out_for_delivery` within an hour of its `planned_from` (or has no
+  `planned_from` at all); *mid* (45 min) for anything else still in flight —
+  `problem`/`returning` included, deliberately not hot. Account-based carriers
+  never fully stop even with nothing hot or in transit: the mid-tier poll is
+  also how a new shipment gets discovered.
+- **Full stop (account-less carriers only):** `update_interval = None` when
+  nothing is tracked or every tracked parcel is delivered. Resumes the moment
+  a parcel is added back, via the options-flow refresh above.
+- **Failed polls:** `_async_update_data` wraps `_async_poll` and recomputes `update_interval` on any failure (never to `None`, falling back to the mid tier), so a failure after the overnight poll retries at the daytime cadence instead of waiting out the quiet window.
+- **Stagger:** a small, stable per-install offset (hash of the config entry
+  id) is added to every computed interval so installs don't all hit an anchor
+  or tier boundary at the same second.
+- **429 backoff:** a 429 anywhere in a poll raises `UpdateFailed` with
+  `retry_after` — the carrier's own `Retry-After` header if present, otherwise
+  an exponential backoff tracked per-coordinator. `api.py`'s
+  `…ApiError.status_code` / `.retry_after` carry this from the HTTP layer.
+- **Delivered codes are skipped from the fetch (account-less carriers only):**
+  once a tracking code's payload comes back `delivered`, `coordinator.py`
+  excludes it from the next cycle's fetch — its payload can never change
+  again. `self._delivered_codes` (keyed on the tracking code, not the barcode)
+  is rebuilt from each cycle's results and intersected with the tracked set on
+  untrack. The code stays in the options list, keeps its sensor and its
+  cached payload, and still shows under the retention window — it just costs
+  no more requests. `coordinator.delivered_codes` surfaces the count in
+  diagnostics. Account-based carriers have nothing to skip here — one account
+  call already returns everything, so they either have no `delivered_codes` or
+  it is always empty.
+
+A carrier that genuinely throttles or soft-bans traffic harder than the 429
+backoff handles is a documented, local divergence from this in that one
+repo's own `CLAUDE.md` — not a generator flag.
+
+## Module layout
+
+| File | Carrier-specific? |
+|---|---|
+| `api.py` (HTTP client, error types; `account/` and `tracking/` packages instead when a repo has two sources) | **yes** |
+| `const.py` (domain, URLs, `ParcelStatus`, option keys) | partly (URLs) |
+| `parcels.py` (status map, `normalize_parcel`, history, sort, filters — pure, no I/O) | partly (the status map, `normalize_parcel`) |
+| `coordinator.py` (fetch, cache, event firing) | mostly not |
+| `config_flow.py` | partly (code validation; key/credential validation on `--auth byo-key`/`credentials`) |
+| `sensor.py` / `button.py` / `calendar.py` / `device_trigger.py` | no |
+| `device.py` (shared device-info helper) | no |
+| `diagnostics.py` | partly (`TO_REDACT`) |
+| `services.py` (`track_parcel` / `untrack_parcel`, account-less only) | no |
+
+`parcels.py` is deliberately free of I/O and HA objects so the per-carrier part
+stays unit-testable without Home Assistant. Config: `ConfigEntry.runtime_data`
+(typed, no `hass.data`), `PARALLEL_UPDATES = 0`, coordinator takes
+`config_entry=entry`. `aiohttp.ClientError` is caught **per parcel** in the gather
+loop (one bad parcel doesn't fail the poll) but **not** around the whole update
+(the coordinator wraps that). Entities: `has_entity_name` + `translation_key`,
+`icons.json`, translated units, `_attr_attribution`, `_unrecorded_attributes` on
+anything with a parcel list or `raw`. Over-redact diagnostics — they get pasted
+into public issues.
+
+## Running tests
+
+```
+python -m pytest tests/ --cov=custom_components.geniki_taxydromiki
+```
+
+Coverage must stay **above 95%** (silver `test-coverage` rule). Run before
+committing. A code change updates the README + this file + `docs/` in the same
+commit; the API reference is never kept in this repo.
