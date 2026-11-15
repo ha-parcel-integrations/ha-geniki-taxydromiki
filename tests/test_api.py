@@ -184,3 +184,45 @@ async def test_network_error_propagates():
     session.post = MagicMock(side_effect=aiohttp.ClientError("boom"))
     with pytest.raises(aiohttp.ClientError):
         await GenikiTaxydromikiApiClient(session).async_get_parcel(ACTIVE_CODE)
+
+
+async def test_batch_posts_every_code_in_one_voucher_list():
+    other = "1000000002"
+    body = {
+        **envelope(ACTIVE_CODE, active_sample()),
+        **envelope(other, active_sample()),
+    }
+    session = _session_returning(200, body)
+    parcels = await GenikiTaxydromikiApiClient(session).async_get_parcels(
+        [ACTIVE_CODE, other]
+    )
+
+    assert parcels[ACTIVE_CODE] is not None
+    assert parcels[other] is not None
+    assert session.post.call_count == 1
+    assert json.loads(session.post.call_args.kwargs["data"])["voucherNo"] == (
+        f"{ACTIVE_CODE},{other}"
+    )
+
+
+async def test_batch_fetches_a_code_the_reply_leaves_out_on_its_own():
+    session = _session_returning(200, envelope(ACTIVE_CODE, active_sample()))
+    alone = _session_returning(200, not_found_envelope())
+    session.post.side_effect = [
+        session.post.return_value,
+        alone.post.return_value,
+    ]
+    client = GenikiTaxydromikiApiClient(session)
+    parcels = await client.async_get_parcels([ACTIVE_CODE, UNKNOWN_CODE])
+
+    assert parcels[ACTIVE_CODE] is not None
+    assert parcels[UNKNOWN_CODE] is None
+    assert session.post.call_count == 2
+    assert UNKNOWN_CODE in session.post.call_args.kwargs["data"]
+
+
+async def test_batch_of_one_is_a_single_request():
+    session = _session_returning(200, envelope(ACTIVE_CODE, active_sample()))
+    parcels = await GenikiTaxydromikiApiClient(session).async_get_parcels([ACTIVE_CODE])
+    assert parcels[ACTIVE_CODE] is not None
+    assert session.post.call_count == 1

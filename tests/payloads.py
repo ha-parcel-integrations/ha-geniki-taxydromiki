@@ -8,6 +8,8 @@ to fix.
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 ACTIVE_CODE = "1000000001"
 DELIVERED_CODE = "1000000002"
 UNKNOWN_CODE = "1000000003"
@@ -93,3 +95,14 @@ def not_found_envelope(code: str = UNKNOWN_CODE) -> dict:
         code,
         {"Result": 9, "Checkpoints": {}, "DeliveryDate": "0001-01-01T00:00:00"},
     )
+
+
+def batch_client() -> AsyncMock:
+    """A client mock whose batch lookup asks async_get_parcel per code."""
+    client = AsyncMock()
+
+    async def batch(codes):
+        return {code: await client.async_get_parcel(code) for code in codes}
+
+    client.async_get_parcels.side_effect = batch
+    return client

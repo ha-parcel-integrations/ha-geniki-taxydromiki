@@ -19,7 +19,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .api import GenikiTaxydromikiApiClient, GenikiTaxydromikiApiError
+from .api import BATCH_SIZE, GenikiTaxydromikiApiClient, GenikiTaxydromikiApiError
 from .const import (
     CONF_INCLUDE_HISTORY,
     CONF_PARCELS,
@@ -255,10 +255,20 @@ class GenikiTaxydromikiCoordinator(DataUpdateCoordinator[list[dict]]):
         # stays untouched until the user removes it by hand.
         codes_to_fetch = [code for code in codes if code not in self._delivered_codes]
 
-        results = await asyncio.gather(
-            *(self._client.async_get_parcel(code) for code in codes_to_fetch),
+        batches = [
+            codes_to_fetch[start : start + BATCH_SIZE]
+            for start in range(0, len(codes_to_fetch), BATCH_SIZE)
+        ]
+        answers = await asyncio.gather(
+            *(self._client.async_get_parcels(batch) for batch in batches),
             return_exceptions=True,
         )
+        results: list[dict | BaseException | None] = []
+        for batch, answer in zip(batches, answers, strict=True):
+            if isinstance(answer, BaseException):
+                results.extend(answer for _ in batch)
+            else:
+                results.extend(answer.get(code) for code in batch)
 
         raws_by_code: dict[str, dict] = {}
         errors = 0

@@ -125,9 +125,15 @@ async def test_options_update_applies_live_without_reload(hass):
     entry.add_to_hass(hass)
 
     mock = AsyncMock(return_value=_sample())
-    with patch(
-        "custom_components.geniki_taxydromiki.api.GenikiTaxydromikiApiClient.async_get_parcel",
-        new=mock,
+    with (
+        patch(
+            "custom_components.geniki_taxydromiki.api.GenikiTaxydromikiApiClient.async_get_parcel",
+            new=mock,
+        ),
+        patch(
+            "custom_components.geniki_taxydromiki.api.GenikiTaxydromikiApiClient._async_post",
+            new=AsyncMock(return_value={"success": True}),
+        ),
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()

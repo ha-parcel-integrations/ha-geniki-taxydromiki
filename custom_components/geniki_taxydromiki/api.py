@@ -30,6 +30,8 @@ _LOGGER = logging.getLogger(__name__)
 _REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=60)
 _RESULT_FOUND = 0
 _RESULT_NOT_FOUND = 9
+# One request takes up to this many comma-separated codes.
+BATCH_SIZE = 10
 
 # Issue link logged with every shape surprise so a user can report it.
 ISSUE_URL = (
@@ -88,9 +90,34 @@ class GenikiTaxydromikiApiClient:
         status raises :class:`GenikiTaxydromikiApiError`; network errors
         propagate as ``aiohttp.ClientError``.
         """
+        payload = await self._async_post(tracking_code)
+        return self._result(payload, tracking_code)
+
+    async def async_get_parcels(
+        self, tracking_codes: list[str]
+    ) -> dict[str, dict[str, Any] | None]:
+        """Fetch up to :data:`BATCH_SIZE` parcels with one request.
+
+        A code the reply leaves out, or answers with a shape we cannot read,
+        is fetched on its own, so one odd entry never fails the others.
+        """
+        if len(tracking_codes) == 1:
+            code = tracking_codes[0]
+            return {code: await self.async_get_parcel(code)}
+        payload = await self._async_post(",".join(tracking_codes))
+        results: dict[str, dict[str, Any] | None] = {}
+        for code in tracking_codes:
+            try:
+                results[code] = self._result(payload, code)
+            except GenikiTaxydromikiApiError:
+                results[code] = await self.async_get_parcel(code)
+        return results
+
+    async def _async_post(self, voucher_no: str) -> dict[str, Any]:
+        """Return the reply envelope for one or more comma-separated codes."""
         # The endpoint wants the bare JSON string as the body, not a form field.
         body = json.dumps(
-            {"lang": "en", "voucherNo": tracking_code}, separators=(",", ":")
+            {"lang": "en", "voucherNo": voucher_no}, separators=(",", ":")
         )
         try:
             async with self._session.post(
@@ -130,7 +157,11 @@ class GenikiTaxydromikiApiClient:
 
         if not isinstance(payload, dict) or payload.get("success") is not True:
             raise GenikiTaxydromikiApiError("unexpected envelope")
+        return payload
 
+    @staticmethod
+    def _result(payload: dict[str, Any], tracking_code: str) -> dict[str, Any] | None:
+        """Read one code's result out of a reply envelope."""
         entry = payload.get(tracking_code)
         if not isinstance(entry, dict):
             warn_once(
