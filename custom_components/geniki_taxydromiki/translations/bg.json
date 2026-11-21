@@ -130,7 +130,7 @@
         "name": "Следваща доставка"
       },
       "en_route_to_pickup_point": {
-        "name": "На път към пункт за получаване",
+        "name": "На път към пункт за вземане",
         "unit_of_measurement": "пратки"
       },
       "awaiting_pickup": {

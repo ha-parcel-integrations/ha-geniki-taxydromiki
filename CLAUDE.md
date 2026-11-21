@@ -38,10 +38,11 @@ you act in one of these areas:
 - **Events and `_known_state` are built from the unfiltered delivered list.**
   The "keep N days / N parcels" option only trims `coordinator.delivered`; a
   parcel it leaves out must still fire `_parcel_delivered`.
-- **The optional pickup-point summaries are a pair.** A carrier that can tell
-  a parcel is destined for a pickup point exposes
-  `en_route_to_pickup_point` for `pickup is true` before it arrives; one that
-  can reach `ParcelStatus.AT_PICKUP_POINT` also exposes `awaiting_pickup`.
+- **The pickup-point summaries are a pair.** A carrier that can deliver to a
+  pickup point or locker exposes both `en_route_to_pickup_point` and
+  `awaiting_pickup`, even before a real parcel has shown the status or flag
+  (they read 0 until then; record it in `PENDING_*`). A carrier without pickup
+  points exposes neither and keeps `pickup` constantly False.
   See *Parcel contract* in `CONVENTIONS.md`. Say "pickup point", not
   "ServicePoint"/"parcel shop"/"locker", for the generic concept; the
   example carrier demonstrates both canonical sensors.
@@ -56,7 +57,7 @@ you act in one of these areas:
 - **Cancelling pairs** (`C_L1`/`C_L2`, `C_E1`/`C_E2`, `C_K8`/`C_K9`) stay in the history but neither row decides the status, so a retracted scan cannot flip a parcel. A `C_L1` or `C_K8` nothing has retracted is an ordinary `in_transit` scan.
 - **Possible delivery cancellations.** `C_P4`, `C_S5` and `C_S8` are unconfirmed and warn as unmapped, but an older delivered scan no longer counts after one, so a false `delivered` cannot stop polling. A newer delivered scan still counts.
 - **Attempt codes before delivery.** `C_EA_DP` and `C_EA_KS` map to `problem`, but any later mapped scan takes over; they appear before `C_P1` on delivered parcels.
-- **No pickup-point code is known.** `at_pickup_point` is never produced: a parcel waiting at a service point (last code `C_A1`) reads `in_transit`. `pickup_point` is pending in `PENDING_CAPABILITIES`; the `awaiting_pickup` sensor stays at zero.
+- **No pickup-point code is known.** Parcels can be collected at a service point, but `at_pickup_point` is never produced: a parcel waiting there (last code `C_A1`) reads `in_transit`, and `pickup` is `False` because no field or status says otherwise. Contract says a carrier with pickup points maps the arrival to `at_pickup_point`; here it stays `in_transit` because `C_A1` has not been confirmed on a real service-point parcel. Both `awaiting_pickup` and `en_route_to_pickup_point` are exposed and read zero until then; `pickup_point` is pending in `PENDING_CAPABILITIES`. Once `C_A1` is confirmed, map it to `at_pickup_point` and `pickup` follows through `is_pickup`.
 - **Fields that are `None` on purpose:** sender, ETA window, weight, dimensions, pickup point. `receiver` is the consignee name on delivered parcels only. `delivered_at` is the reply's delivery date, else the delivering scan's time.
 - **Polling:** no delivery window exists, so an out-for-delivery parcel is always in the hot tier (15 min). The suite's dynamic polling is otherwise unchanged; no explicit throttling has been observed. A found code has been seen taking over 30 seconds to answer, cause unknown, so the request timeout is 60 seconds.
 - **Tracking codes are normalised to uppercase letters and digits** by the shared options-flow helper; no format regex.

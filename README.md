@@ -115,8 +115,8 @@ Standard HA removal applies: **Settings → Devices & Services → Geniki Taxydr
 | `sensor.geniki_taxydromiki_incoming_parcels` | Number of active tracked parcels, full list under the `parcels` attribute |
 | `sensor.geniki_taxydromiki_parcel_<code>` | One per tracked parcel; state is the canonical status, attributes carry the full normalised parcel |
 | `sensor.geniki_taxydromiki_next_delivery` | Earliest expected delivery moment; stays empty because Geniki Taxydromiki reports no delivery window |
-| `sensor.geniki_taxydromiki_en_route_to_pickup_point` | Incoming parcels on their way to a pickup point that have not arrived yet; stays at zero until Geniki Taxydromiki reports a pickup-point state |
-| `sensor.geniki_taxydromiki_awaiting_pickup` | Incoming parcels that are ready to collect at a pickup point; stays at zero until Geniki Taxydromiki reports a pickup-point state |
+| `sensor.geniki_taxydromiki_en_route_to_pickup_point` | Incoming parcels on their way to a pickup point that have not arrived yet; stays at zero until a parcel at a pickup point is recognised |
+| `sensor.geniki_taxydromiki_awaiting_pickup` | Incoming parcels that are ready to collect at a pickup point; stays at zero until a parcel at a pickup point is recognised |
 | `sensor.geniki_taxydromiki_delivered_parcels` | Recently delivered parcels (see the retention option) |
 | `calendar.geniki_taxydromiki_deliveries` | Read-only calendar of expected deliveries; stays empty because no delivery window is reported |
 | `sensor.geniki_taxydromiki_last_successful_update` | Diagnostic: when Geniki Taxydromiki was last polled successfully |
