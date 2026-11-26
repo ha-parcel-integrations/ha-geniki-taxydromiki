@@ -37,6 +37,7 @@ A custom Home Assistant integration that tracks your [Geniki Taxydromiki](https:
 - Per-parcel sensor with the canonical status (`registered` / `in_transit` / `out_for_delivery` / `delivered` / …), the carrier's own status text and a tracking deep-link
 - Summary sensors: incoming parcels, recently delivered parcels
 - `geniki_taxydromiki.track_parcel` / `geniki_taxydromiki.untrack_parcel` services, so a dashboard button can add a parcel
+- A `contents` field on every parcel, set in your own words with the `geniki_taxydromiki.update_contents` service or the `contents` field of `geniki_taxydromiki.track_parcel`; it titles the calendar event and shows on the next-delivery sensor
 - Events + device triggers for no-code automations (parcel registered, status changed, delivered)
 - Opt-in per-parcel status history
 - Manual refresh button and a diagnostic last-update sensor
@@ -157,8 +158,9 @@ Every payload is the full normalised parcel plus the hub's `device_id`. Events a
 
 | Service | Fields | Description |
 |---|---|---|
-| `geniki_taxydromiki.track_parcel` | `tracking_code` | Start tracking a parcel |
+| `geniki_taxydromiki.track_parcel` | `tracking_code`, optional `contents` | Start tracking a parcel, optionally noting what is in it |
 | `geniki_taxydromiki.untrack_parcel` | `tracking_code` | Stop tracking a parcel |
+| `geniki_taxydromiki.update_contents` | `tracking_code`, `contents` (optional) | Set what is in a parcel, tracked or not; an empty `contents` clears it. It titles the calendar event and shows on the next-delivery sensor |
 
 ## Examples
 

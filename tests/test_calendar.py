@@ -108,3 +108,17 @@ async def test_get_events_filters_by_range():
     end = datetime(2100, 1, 1, tzinfo=UTC)
     events = await cal.async_get_events(MagicMock(), start, end)
     assert {e.uid for e in events} == {"FUTURE"}
+
+
+def test_event_title_is_contents_then_sender_then_fallback():
+    with_contents = _parcel("A", planned_from="2099-01-01T10:00:00Z")
+    with_contents["contents"] = "Running shoes"
+    assert _cal([with_contents]).event.summary == "Running shoes"
+
+    sender_only = _parcel("A", planned_from="2099-01-01T10:00:00Z")
+    sender_only["contents"] = None
+    assert _cal([sender_only]).event.summary == "Example Sender"
+
+    bare = _parcel("A", planned_from="2099-01-01T10:00:00Z")
+    bare["sender"] = None
+    assert _cal([bare]).event.summary == "Parcel A"

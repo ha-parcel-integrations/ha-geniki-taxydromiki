@@ -38,6 +38,7 @@ async def test_diagnostics_redacts_and_counts(hass):
     parcel = result["incoming"][0]
     for key in ("barcode", "receiver", "raw", "url", "delivered_at", "raw_status"):
         assert parcel[key] == "**REDACTED**"
+    assert "contents" in TO_REDACT
     # non-identifying fields survive, or the diagnostics would be useless
     assert parcel["status"] == "delivered"
     assert "Test Recipient" not in str(result)
