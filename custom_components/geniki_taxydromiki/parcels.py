@@ -326,7 +326,9 @@ def _deciding_status(checkpoints: list[dict]) -> ParcelStatus:
 def _delivering_timestamp(checkpoints: list[dict]) -> str | None:
     """Timestamp of the newest dated checkpoint that maps to delivered."""
     for item in reversed(checkpoints):
-        delivering = _STATUS_MAP.get(item.get("StatusCode")) is ParcelStatus.DELIVERED
+        delivering = (
+            _STATUS_MAP.get(item.get("StatusCode") or "") is ParcelStatus.DELIVERED
+        )
         if delivering and item.get("_timestamp"):
             return item["_timestamp"]
     return None
@@ -518,7 +520,7 @@ def normalize_parcel(raw: dict, *, include_history: bool = False) -> dict:
         "pickup": is_pickup(
             None,
             status,
-            (_STATUS_MAP.get(item.get("StatusCode")) for item in checkpoints),
+            (_STATUS_MAP.get(item.get("StatusCode") or "") for item in checkpoints),
         ),
         "pickup_point": None,
         "url": tracking_url(tracking_code),
